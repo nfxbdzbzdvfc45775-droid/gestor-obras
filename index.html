@@ -277,10 +277,11 @@
 
     <div class="detail-header">
       <div class="dh-top">
-        <div>
+        <div style="flex:1; min-width:0; cursor:pointer;" id="dh-info-click">
           <h2 id="dh-name">—</h2>
           <div class="client-line" id="dh-client"></div>
           <div class="addr-line" id="dh-addr"></div>
+          <div style="font-size:11px; color:var(--brick); margin-top:6px; font-weight:600;">✎ Toca para editar</div>
         </div>
         <select class="status-select" id="dh-status">
           <option value="activa">Activa</option>
@@ -332,7 +333,7 @@
 <!-- ============ MODALS ============ -->
 <div class="modal-overlay hidden" id="modal-project">
   <div class="modal-sheet">
-    <h3>Nuevo proyecto</h3>
+    <h3 id="mp-title">Nuevo proyecto</h3>
     <div class="field">
       <label>Nombre del proyecto / obra</label>
       <input type="text" id="mp-name" placeholder="Ej. Reforma baño C/ Mayor 12">
@@ -358,7 +359,7 @@
 
 <div class="modal-overlay hidden" id="modal-task">
   <div class="modal-sheet">
-    <h3>Nueva tarea</h3>
+    <h3 id="mt-title-h">Nueva tarea</h3>
     <div class="field">
       <label>Descripción</label>
       <input type="text" id="mt-title" placeholder="Ej. Alicatar pared del baño">
@@ -380,7 +381,7 @@
 
 <div class="modal-overlay hidden" id="modal-material">
   <div class="modal-sheet">
-    <h3>Nuevo material / gasto</h3>
+    <h3 id="mm-title-h">Nuevo material / gasto</h3>
     <div class="field">
       <label>Nombre</label>
       <input type="text" id="mm-name" placeholder="Ej. Azulejo 30x60 (12 cajas)">
@@ -395,12 +396,17 @@
         <input type="text" id="mm-supplier" placeholder="Ej. Bricomart">
       </div>
     </div>
+    <div class="field">
+      <label>Enlace del producto (opcional)</label>
+      <input type="url" id="mm-link" placeholder="https://www.leroymerlin.es/...">
+    </div>
     <div class="modal-actions">
       <button class="btn btn-ghost" id="mm-cancel">Cancelar</button>
       <button class="btn btn-primary" id="mm-save">Añadir</button>
     </div>
   </div>
 </div>
+
 
 <button class="fab" id="fab-new" title="Nuevo proyecto">+</button>
 
@@ -514,6 +520,9 @@
     d.textContent = s||'';
     return d.innerHTML;
   }
+  function escapeAttr(s){
+    return (s||'').replace(/"/g, '&quot;');
+  }
 
   // ---------- detail view ----------
   function getProject(id){ return projects.find(p=>p.id===id); }
@@ -559,7 +568,7 @@
       taskList.innerHTML = sortedTasks.map(t=>`
         <div class="task-row" data-tid="${t.id}">
           <div class="task-check ${t.done?'checked':''}" data-action="toggle">${t.done?'✓':''}</div>
-          <div class="task-body">
+          <div class="task-body" data-action="edit">
             <div class="task-title ${t.done?'done':''}">${escapeHtml(t.title)}</div>
             <div class="task-meta"><span class="prio-tag prio-${t.priority}">${t.priority}</span></div>
           </div>
@@ -569,7 +578,11 @@
       taskList.querySelectorAll('.task-row').forEach(row=>{
         const tid = row.dataset.tid;
         row.querySelector('[data-action="toggle"]').addEventListener('click', ()=> toggleTask(tid));
-        row.querySelector('[data-action="delete"]').addEventListener('click', ()=> deleteTask(tid));
+        row.querySelector('[data-action="delete"]').addEventListener('click', (e)=>{
+          e.stopPropagation();
+          deleteTask(tid);
+        });
+        row.querySelector('[data-action="edit"]').addEventListener('click', ()=> openTaskModal(tid));
       });
     }
 
@@ -585,9 +598,9 @@
     } else {
       matList.innerHTML = p.materials.map(m=>`
         <div class="mat-row" data-mid="${m.id}">
-          <div class="mat-info">
+          <div class="mat-info" data-action="edit">
             <div class="mat-name">${escapeHtml(m.name)}</div>
-            <div class="mat-sub">${m.supplier ? escapeHtml(m.supplier) : 'Sin proveedor'}</div>
+            <div class="mat-sub">${m.supplier ? escapeHtml(m.supplier) : 'Sin proveedor'}${m.link ? ` · <a href="${escapeAttr(m.link)}" target="_blank" rel="noopener" style="color:var(--brick); text-decoration:underline;" data-action="open-link">🔗 Ver producto</a>` : ''}</div>
           </div>
           <div class="mat-cost">${fmtEUR(m.cost)}</div>
           <button class="mat-del" data-action="delete">✕</button>
@@ -595,7 +608,13 @@
       `).join('');
       matList.querySelectorAll('.mat-row').forEach(row=>{
         const mid = row.dataset.mid;
-        row.querySelector('[data-action="delete"]').addEventListener('click', ()=> deleteMaterial(mid));
+        row.querySelector('[data-action="delete"]').addEventListener('click', (e)=>{
+          e.stopPropagation();
+          deleteMaterial(mid);
+        });
+        row.querySelector('[data-action="edit"]').addEventListener('click', ()=> openMaterialModal(mid));
+        const linkEl = row.querySelector('[data-action="open-link"]');
+        if(linkEl) linkEl.addEventListener('click', (e)=> e.stopPropagation());
       });
     }
 
@@ -632,7 +651,7 @@
     confirmDeleteProject(id);
     if(!getProject(id)) closeProject();
   });
-  document.getElementById('fab-new').addEventListener('click', ()=> openModal('modal-project'));
+  document.getElementById('fab-new').addEventListener('click', ()=> openProjectModal(null));
 
   document.getElementById('dh-status').addEventListener('change', (e)=>{
     const p = getProject(currentProjectId);
@@ -656,67 +675,123 @@
   function openModal(id){ document.getElementById(id).classList.remove('hidden'); }
   function closeModal(id){ document.getElementById(id).classList.add('hidden'); }
 
+  // ----- proyecto: crear / editar -----
+  let editingProjectId = null;
+
+  function openProjectModal(id){
+    editingProjectId = id || null;
+    const p = id ? getProject(id) : null;
+    document.getElementById('mp-title').textContent = p ? 'Editar proyecto' : 'Nuevo proyecto';
+    document.getElementById('mp-save').textContent = p ? 'Guardar' : 'Crear';
+    document.getElementById('mp-name').value = p ? p.name : '';
+    document.getElementById('mp-client').value = p ? (p.client||'') : '';
+    document.getElementById('mp-addr').value = p ? (p.address||'') : '';
+    document.getElementById('mp-budget').value = p && p.budget ? p.budget : '';
+    openModal('modal-project');
+  }
+
+  document.getElementById('dh-info-click').addEventListener('click', ()=> openProjectModal(currentProjectId));
+
   document.getElementById('mp-cancel').addEventListener('click', ()=>{
     closeModal('modal-project');
-    ['mp-name','mp-client','mp-addr','mp-budget'].forEach(id=> document.getElementById(id).value='');
   });
   document.getElementById('mp-save').addEventListener('click', async ()=>{
     const name = document.getElementById('mp-name').value.trim();
     if(!name){ document.getElementById('mp-name').focus(); return; }
-    const proj = {
-      id: uid(),
-      name,
-      client: document.getElementById('mp-client').value.trim(),
-      address: document.getElementById('mp-addr').value.trim(),
-      budget: Number(document.getElementById('mp-budget').value) || null,
-      status: 'activa',
-      createdAt: todayISO(),
-      tasks: [],
-      materials: [],
-      notes: ''
-    };
-    projects.push(proj);
+    const client = document.getElementById('mp-client').value.trim();
+    const address = document.getElementById('mp-addr').value.trim();
+    const budget = Number(document.getElementById('mp-budget').value) || null;
+
+    if(editingProjectId){
+      const p = getProject(editingProjectId);
+      p.name = name; p.client = client; p.address = address; p.budget = budget;
+    } else {
+      projects.push({
+        id: uid(), name, client, address, budget,
+        status: 'activa', createdAt: todayISO(),
+        tasks: [], materials: [], notes: ''
+      });
+    }
     await saveData();
     closeModal('modal-project');
-    ['mp-name','mp-client','mp-addr','mp-budget'].forEach(id=> document.getElementById(id).value='');
-    renderList();
+    if(editingProjectId){ renderDetail(); } else { renderList(); }
+    editingProjectId = null;
   });
 
-  document.getElementById('btn-add-task').addEventListener('click', ()=> openModal('modal-task'));
+  // ----- tarea: crear / editar -----
+  let editingTaskId = null;
+
+  function openTaskModal(tid){
+    editingTaskId = tid || null;
+    const p = getProject(currentProjectId);
+    const t = tid ? p.tasks.find(x=>x.id===tid) : null;
+    document.getElementById('mt-title-h').textContent = t ? 'Editar tarea' : 'Nueva tarea';
+    document.getElementById('mt-save').textContent = t ? 'Guardar' : 'Añadir';
+    document.getElementById('mt-title').value = t ? t.title : '';
+    document.getElementById('mt-prio').value = t ? t.priority : 'media';
+    openModal('modal-task');
+  }
+
+  document.getElementById('btn-add-task').addEventListener('click', ()=> openTaskModal(null));
   document.getElementById('mt-cancel').addEventListener('click', ()=>{
     closeModal('modal-task');
-    document.getElementById('mt-title').value='';
   });
   document.getElementById('mt-save').addEventListener('click', async ()=>{
     const title = document.getElementById('mt-title').value.trim();
     if(!title){ document.getElementById('mt-title').focus(); return; }
+    const priority = document.getElementById('mt-prio').value;
     const p = getProject(currentProjectId);
-    p.tasks.push({ id: uid(), title, priority: document.getElementById('mt-prio').value, done:false });
+
+    if(editingTaskId){
+      const t = p.tasks.find(x=>x.id===editingTaskId);
+      t.title = title; t.priority = priority;
+    } else {
+      p.tasks.push({ id: uid(), title, priority, done:false });
+    }
     await saveData();
     closeModal('modal-task');
-    document.getElementById('mt-title').value='';
-    document.getElementById('mt-prio').value='media';
+    editingTaskId = null;
     renderDetail();
   });
 
-  document.getElementById('btn-add-material').addEventListener('click', ()=> openModal('modal-material'));
+  // ----- material: crear / editar -----
+  let editingMaterialId = null;
+
+  function openMaterialModal(mid){
+    editingMaterialId = mid || null;
+    const p = getProject(currentProjectId);
+    const m = mid ? p.materials.find(x=>x.id===mid) : null;
+    document.getElementById('mm-title-h').textContent = m ? 'Editar material / gasto' : 'Nuevo material / gasto';
+    document.getElementById('mm-save').textContent = m ? 'Guardar' : 'Añadir';
+    document.getElementById('mm-name').value = m ? m.name : '';
+    document.getElementById('mm-cost').value = m ? m.cost : '';
+    document.getElementById('mm-supplier').value = m ? (m.supplier||'') : '';
+    document.getElementById('mm-link').value = m ? (m.link||'') : '';
+    openModal('modal-material');
+  }
+
+  document.getElementById('btn-add-material').addEventListener('click', ()=> openMaterialModal(null));
   document.getElementById('mm-cancel').addEventListener('click', ()=>{
     closeModal('modal-material');
-    ['mm-name','mm-cost','mm-supplier'].forEach(id=> document.getElementById(id).value='');
   });
   document.getElementById('mm-save').addEventListener('click', async ()=>{
     const name = document.getElementById('mm-name').value.trim();
     if(!name){ document.getElementById('mm-name').focus(); return; }
+    const cost = Number(document.getElementById('mm-cost').value) || 0;
+    const supplier = document.getElementById('mm-supplier').value.trim();
+    let link = document.getElementById('mm-link').value.trim();
+    if(link && !/^https?:\/\//i.test(link)) link = 'https://' + link;
     const p = getProject(currentProjectId);
-    p.materials.push({
-      id: uid(),
-      name,
-      cost: Number(document.getElementById('mm-cost').value) || 0,
-      supplier: document.getElementById('mm-supplier').value.trim()
-    });
+
+    if(editingMaterialId){
+      const m = p.materials.find(x=>x.id===editingMaterialId);
+      m.name = name; m.cost = cost; m.supplier = supplier; m.link = link;
+    } else {
+      p.materials.push({ id: uid(), name, cost, supplier, link });
+    }
     await saveData();
     closeModal('modal-material');
-    ['mm-name','mm-cost','mm-supplier'].forEach(id=> document.getElementById(id).value='');
+    editingMaterialId = null;
     renderDetail();
   });
 
